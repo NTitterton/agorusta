@@ -270,6 +270,7 @@ async fn main() -> Result<(), Error> {
             .endpoint_url(endpoint)
             .region(config.region().cloned())
             .credentials_provider(config.credentials_provider().unwrap().clone())
+            .behavior_version(aws_sdk_apigatewaymanagement::config::BehaviorVersion::latest())
             .build();
         Some(ApiGwClient::from_conf(apigw_config))
     } else {
