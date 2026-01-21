@@ -74,12 +74,31 @@ pub async fn create_server(
         return Err((400, "Server name must be 1-100 characters".to_string()));
     }
 
+    let server_name = req.name.trim().to_string();
+
+    // Check if server name is already taken
+    let existing = db
+        .query()
+        .table_name(get_table("SERVERS_TABLE"))
+        .index_name("name-index")
+        .key_condition_expression("#n = :name")
+        .expression_attribute_names("#n", "name")
+        .expression_attribute_values(":name", AttributeValue::S(server_name.clone()))
+        .limit(1)
+        .send()
+        .await
+        .map_err(|e| (500, format!("Database error: {}", e)))?;
+
+    if !existing.items().is_empty() {
+        return Err((409, "A server with this name already exists".to_string()));
+    }
+
     let server_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
     let server = Server {
         id: server_id.clone(),
-        name: req.name.trim().to_string(),
+        name: server_name,
         owner_id: user_id.to_string(),
         icon_url: None,
         created_at: now,

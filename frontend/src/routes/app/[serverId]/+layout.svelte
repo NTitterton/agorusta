@@ -71,6 +71,9 @@
 		{:else if server}
 			<div class="channel-header">
 				<h2>{server.name}</h2>
+				<a href="/app/{server.id}/settings" class="settings-link" title="Server Settings">
+					⚙
+				</a>
 			</div>
 
 			<div class="channel-category">
@@ -155,6 +158,20 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		flex: 1;
+	}
+
+	.settings-link {
+		color: var(--text-muted);
+		text-decoration: none;
+		font-size: 16px;
+		opacity: 0.7;
+		transition: opacity 0.2s;
+	}
+
+	.settings-link:hover {
+		opacity: 1;
+		color: var(--text-primary);
 	}
 
 	.loading-text,

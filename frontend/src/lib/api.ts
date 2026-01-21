@@ -210,3 +210,175 @@ export async function sendMessage(
 		body: JSON.stringify({ content })
 	});
 }
+
+// ============ Invites ============
+
+export interface Invite {
+	code: string;
+	server_id: string;
+	server_name: string;
+	created_by: string;
+	created_at: number;
+	expires_at: number | null;
+	max_uses: number | null;
+	use_count: number;
+}
+
+export interface InviteInfo {
+	code: string;
+	server_name: string;
+	server_id: string;
+	member_count: number;
+}
+
+export async function createInvite(
+	serverId: string,
+	options?: { expires_in_hours?: number; max_uses?: number }
+): Promise<{ data?: Invite; error?: string }> {
+	return api<Invite>(`/servers/${serverId}/invites`, {
+		method: 'POST',
+		body: JSON.stringify(options || {})
+	});
+}
+
+export async function listInvites(serverId: string): Promise<{ data?: Invite[]; error?: string }> {
+	return api<Invite[]>(`/servers/${serverId}/invites`);
+}
+
+export async function deleteInvite(
+	serverId: string,
+	code: string
+): Promise<{ error?: string }> {
+	return api(`/servers/${serverId}/invites/${code}`, {
+		method: 'DELETE'
+	});
+}
+
+export async function getInviteInfo(code: string): Promise<{ data?: InviteInfo; error?: string }> {
+	return api<InviteInfo>(`/invites/${code}`);
+}
+
+export async function joinByCode(code: string): Promise<{ data?: ServerWithChannels; error?: string }> {
+	return api<ServerWithChannels>(`/invites/${code}/join`, {
+		method: 'POST'
+	});
+}
+
+// ============ Server Passwords ============
+
+export interface ServerPassword {
+	id: string;
+	server_id: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export async function createServerPassword(
+	serverId: string,
+	password: string,
+	expiresInHours?: number
+): Promise<{ data?: ServerPassword; error?: string }> {
+	return api<ServerPassword>(`/servers/${serverId}/passwords`, {
+		method: 'POST',
+		body: JSON.stringify({
+			password,
+			expires_in_hours: expiresInHours
+		})
+	});
+}
+
+export async function listServerPasswords(
+	serverId: string
+): Promise<{ data?: ServerPassword[]; error?: string }> {
+	return api<ServerPassword[]>(`/servers/${serverId}/passwords`);
+}
+
+export async function deleteServerPassword(
+	serverId: string,
+	passwordId: string
+): Promise<{ error?: string }> {
+	return api(`/servers/${serverId}/passwords/${passwordId}`, {
+		method: 'DELETE'
+	});
+}
+
+export async function joinByName(
+	serverName: string,
+	password: string
+): Promise<{ data?: ServerWithChannels; error?: string }> {
+	return api<ServerWithChannels>('/servers/join', {
+		method: 'POST',
+		body: JSON.stringify({ server_name: serverName, password })
+	});
+}
+
+// ============ Direct Messages ============
+
+export interface Conversation {
+	id: string;
+	other_user_id: string;
+	other_username: string;
+	updated_at: number;
+	last_message_preview: string | null;
+	created_at: number;
+}
+
+export interface DirectMessage {
+	id: string;
+	conversation_id: string;
+	author_id: string;
+	author_username: string;
+	content: string;
+	created_at: number;
+}
+
+export interface DirectMessagesResponse {
+	messages: DirectMessage[];
+	has_more: boolean;
+	next_cursor: number | null;
+}
+
+export interface UserSearchResult {
+	id: string;
+	username: string;
+}
+
+export async function searchUsers(query: string): Promise<{ data?: UserSearchResult[]; error?: string }> {
+	return api<UserSearchResult[]>(`/users/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getConversations(): Promise<{ data?: Conversation[]; error?: string }> {
+	return api<Conversation[]>('/dms');
+}
+
+export async function startConversation(recipientId: string): Promise<{ data?: Conversation; error?: string }> {
+	return api<Conversation>('/dms', {
+		method: 'POST',
+		body: JSON.stringify({ recipient_id: recipientId })
+	});
+}
+
+export async function getConversation(conversationId: string): Promise<{ data?: Conversation; error?: string }> {
+	return api<Conversation>(`/dms/${conversationId}`);
+}
+
+export async function getDmMessages(
+	conversationId: string,
+	options?: { limit?: number; before?: number }
+): Promise<{ data?: DirectMessagesResponse; error?: string }> {
+	const params = new URLSearchParams();
+	if (options?.limit) params.set('limit', options.limit.toString());
+	if (options?.before) params.set('before', options.before.toString());
+	const query = params.toString() ? `?${params}` : '';
+	return api<DirectMessagesResponse>(`/dms/${conversationId}/messages${query}`);
+}
+
+export async function sendDmMessage(
+	conversationId: string,
+	content: string
+): Promise<{ data?: DirectMessage; error?: string }> {
+	return api<DirectMessage>(`/dms/${conversationId}/messages`, {
+		method: 'POST',
+		body: JSON.stringify({ content })
+	});
+}

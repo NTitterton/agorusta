@@ -1,6 +1,7 @@
-import { WS_URL, type Message } from './api';
+import { WS_URL, type Message, type DirectMessage } from './api';
 
 type MessageHandler = (message: Message) => void;
+type DmHandler = (message: DirectMessage) => void;
 
 class WebSocketService {
 	private ws: WebSocket | null = null;
@@ -8,6 +9,7 @@ class WebSocketService {
 	private maxReconnectAttempts = 5;
 	private reconnectDelay = 1000;
 	private messageHandlers: Map<string, Set<MessageHandler>> = new Map();
+	private dmHandlers: Map<string, Set<DmHandler>> = new Map();
 	private subscribedChannels: Set<string> = new Set();
 
 	connected = $state(false);
@@ -66,6 +68,10 @@ class WebSocketService {
 						const message = data.message as Message;
 						const handlers = this.messageHandlers.get(message.channel_id);
 						handlers?.forEach((handler) => handler(message));
+					} else if (data.type === 'new_dm') {
+						const message = data.message as DirectMessage;
+						const handlers = this.dmHandlers.get(message.conversation_id);
+						handlers?.forEach((handler) => handler(message));
 					}
 				} catch (e) {
 					console.error('Failed to parse WebSocket message:', e);
@@ -85,6 +91,7 @@ class WebSocketService {
 		this.connected = false;
 		this.subscribedChannels.clear();
 		this.messageHandlers.clear();
+		this.dmHandlers.clear();
 	}
 
 	subscribeToChannel(channelId: string, handler: MessageHandler): () => void {
@@ -133,6 +140,30 @@ class WebSocketService {
 			);
 			console.log('Unsubscribed from channel:', channelId);
 		}
+	}
+
+	subscribeToConversation(conversationId: string, handler: DmHandler): () => void {
+		// Track handler
+		if (!this.dmHandlers.has(conversationId)) {
+			this.dmHandlers.set(conversationId, new Set());
+		}
+		this.dmHandlers.get(conversationId)!.add(handler);
+
+		// Send subscribe if not already subscribed (uses same mechanism as channels)
+		if (!this.subscribedChannels.has(conversationId)) {
+			this.subscribedChannels.add(conversationId);
+			this.sendSubscribe(conversationId);
+		}
+
+		// Return unsubscribe function
+		return () => {
+			this.dmHandlers.get(conversationId)?.delete(handler);
+			if (this.dmHandlers.get(conversationId)?.size === 0) {
+				this.dmHandlers.delete(conversationId);
+				this.subscribedChannels.delete(conversationId);
+				this.sendUnsubscribe(conversationId);
+			}
+		};
 	}
 }
 

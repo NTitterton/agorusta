@@ -18,6 +18,10 @@ Globals:
         SERVERS_TABLE: !Ref ServersTable
         CHANNELS_TABLE: !Ref ChannelsTable
         MEMBERS_TABLE: !Ref MembersTable
+        INVITES_TABLE: !Ref InvitesTable
+        SERVER_PASSWORDS_TABLE: !Ref ServerPasswordsTable
+        DM_CONVERSATIONS_TABLE: !Ref DirectConversationsTable
+        DM_MESSAGES_TABLE: !Ref DirectMessagesTable
 
 Parameters:
   Stage:
@@ -75,6 +79,14 @@ Resources:
             TableName: !Ref MessagesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref ConnectionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvitesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ServerPasswordsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DirectConversationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DirectMessagesTable
         - Statement:
             - Effect: Allow
               Action:
@@ -213,6 +225,8 @@ Resources:
           AttributeType: S
         - AttributeName: email
           AttributeType: S
+        - AttributeName: username
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
@@ -220,6 +234,12 @@ Resources:
         - IndexName: email-index
           KeySchema:
             - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: username-index
+          KeySchema:
+            - AttributeName: username
               KeyType: HASH
           Projection:
             ProjectionType: ALL
@@ -232,9 +252,18 @@ Resources:
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
+        - AttributeName: name
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: name-index
+          KeySchema:
+            - AttributeName: name
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
 
   ChannelsTable:
     Type: AWS::DynamoDB::Table
@@ -305,6 +334,105 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+
+  InvitesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub agorusta-invites-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: code
+          AttributeType: S
+        - AttributeName: server_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: N
+      KeySchema:
+        - AttributeName: code
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: server-invites-index
+          KeySchema:
+            - AttributeName: server_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  ServerPasswordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub agorusta-server-passwords-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: server_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: N
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: server-passwords-index
+          KeySchema:
+            - AttributeName: server_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  DirectConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub agorusta-dm-conversations-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: updated_at
+          AttributeType: N
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: user_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: user-conversations-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: updated_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  DirectMessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub agorusta-dm-messages-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: conversation_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: N
+      KeySchema:
+        - AttributeName: conversation_id
+          KeyType: HASH
+        - AttributeName: created_at
+          KeyType: RANGE
 
 Outputs:
   HttpApiUrl:
