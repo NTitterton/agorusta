@@ -1,22 +1,65 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Agorusta is a Discord-like chat application. The project is currently in early setup phase.
+Agorusta is a Discord-like chat application with a Rust serverless backend and SvelteKit frontend, optimized for solo dev hosting costs on AWS.
 
-## Environment Configuration
+## Current Status
 
-The application uses the following services:
-- **Backend**: Runs on port 5000
-- **Database**: PostgreSQL on port 5432
-- **Cache**: Redis on port 6379
-- **Frontend**: Next.js connecting to the backend API and WebSocket server
+The core features are implemented and deployed:
+- User authentication (JWT with Argon2 password hashing)
+- Server creation with unique names
+- Server joining via invite codes or name+password
+- Text channels with real-time messaging
+- Direct messages between users
+- WebSocket-powered live updates
 
-## Architecture Notes
+## Architecture
 
-Based on environment configuration, the planned architecture includes:
-- JWT-based authentication
-- WebSocket support for real-time messaging
-- AWS S3 integration for file uploads (planned)
+- **Frontend**: SvelteKit 5 with TypeScript, using Svelte runes ($state, $effect, $derived)
+- **Backend**: Rust Lambda functions (api + websocket)
+- **Database**: DynamoDB (10 tables - see project_design.md)
+- **Real-time**: API Gateway WebSockets
+- **IaC**: AWS SAM (template.yaml)
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `template.yaml` | AWS SAM infrastructure definition |
+| `backend/lambdas/api/src/main.rs` | API routes and handlers |
+| `backend/lambdas/api/src/dms.rs` | Direct messages logic |
+| `backend/lambdas/api/src/invites.rs` | Invite codes and server passwords |
+| `frontend/src/lib/api.ts` | Frontend API client and types |
+| `frontend/src/lib/websocket.svelte.ts` | WebSocket service |
+
+## Common Commands
+
+```bash
+# Build and deploy backend
+sam build && sam deploy
+
+# Run frontend dev server
+cd frontend && npm run dev
+
+# Check backend compilation
+cd backend && cargo check
+```
+
+## Development Notes
+
+- Backend timestamps are stored in milliseconds (not seconds)
+- Conversation IDs for DMs are deterministic: `min(user1, user2)_max(user1, user2)`
+- WebSocket subscriptions use channel_id for both channels and DM conversations
+- Server names must be unique (enforced via GSI query)
+
+## Potential Future Work
+
+- File uploads (S3)
+- Voice channels (WebRTC)
+- Server roles and permissions
+- Message editing/deletion
+- Typing indicators
+- Read receipts
