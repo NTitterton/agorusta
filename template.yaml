@@ -59,6 +59,9 @@ Resources:
       CodeUri: ./backend
       Handler: bootstrap
       FunctionName: !Sub agorusta-api-${Stage}
+      Environment:
+        Variables:
+          WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref UsersTable
@@ -70,6 +73,13 @@ Resources:
             TableName: !Ref MembersTable
         - DynamoDBCrudPolicy:
             TableName: !Ref MessagesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
       Events:
         CatchAll:
           Type: HttpApi

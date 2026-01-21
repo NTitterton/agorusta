@@ -1,13 +1,17 @@
+use aws_sdk_apigatewaymanagement::Client as ApiGwClient;
 use aws_sdk_dynamodb::Client as DynamoClient;
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use std::env;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod messages;
 mod servers;
 
 struct AppState {
     db: DynamoClient,
+    apigw: Option<ApiGwClient>,
 }
 
 fn cors_response(status: u16, body: impl Into<Body>) -> Result<Response<Body>, Error> {
@@ -183,6 +187,65 @@ async fn handler(event: Request, state: Arc<AppState>) -> Result<Response<Body>,
             }
         }
 
+        // ============ Message routes ============
+        ("GET", ["servers", server_id, "channels", channel_id, "messages"]) => {
+            match require_auth(&event) {
+                Ok(claims) => {
+                    // Parse query params for pagination
+                    let query_params = event.query_string_parameters();
+                    let limit: usize = query_params
+                        .first("limit")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(50);
+                    let before: Option<i64> = query_params
+                        .first("before")
+                        .and_then(|v| v.parse().ok());
+
+                    match messages::list_messages(
+                        &state.db,
+                        server_id,
+                        channel_id,
+                        &claims.sub,
+                        limit,
+                        before,
+                    )
+                    .await
+                    {
+                        Ok(response) => json_response(200, &response),
+                        Err((status, message)) => error_response(status, &message),
+                    }
+                }
+                Err(resp) => Ok(resp),
+            }
+        }
+        ("POST", ["servers", server_id, "channels", channel_id, "messages"]) => {
+            match require_auth(&event) {
+                Ok(claims) => {
+                    let username = claims.email.split('@').next().unwrap_or("user");
+                    match messages::create_message(
+                        &state.db,
+                        server_id,
+                        channel_id,
+                        &claims.sub,
+                        username,
+                        &body,
+                    )
+                    .await
+                    {
+                        Ok(message) => {
+                            // Broadcast to WebSocket subscribers (fire and forget)
+                            if let Some(apigw) = &state.apigw {
+                                messages::broadcast_message(&state.db, apigw, &message).await;
+                            }
+                            json_response(201, &message)
+                        }
+                        Err((status, message)) => error_response(status, &message),
+                    }
+                }
+                Err(resp) => Ok(resp),
+            }
+        }
+
         // 404 for everything else
         _ => {
             error_response(404, "not found")
@@ -200,7 +263,21 @@ async fn main() -> Result<(), Error> {
     // Initialize AWS SDK
     let config = aws_config::load_from_env().await;
     let db = DynamoClient::new(&config);
-    let state = Arc::new(AppState { db });
+
+    // Initialize API Gateway Management client for WebSocket broadcasts
+    let apigw = if let Ok(endpoint) = env::var("WEBSOCKET_ENDPOINT") {
+        let apigw_config = aws_sdk_apigatewaymanagement::Config::builder()
+            .endpoint_url(endpoint)
+            .region(config.region().cloned())
+            .credentials_provider(config.credentials_provider().unwrap().clone())
+            .build();
+        Some(ApiGwClient::from_conf(apigw_config))
+    } else {
+        tracing::warn!("WEBSOCKET_ENDPOINT not set, broadcast disabled");
+        None
+    };
+
+    let state = Arc::new(AppState { db, apigw });
 
     run(service_fn(move |event| {
         let state = Arc::clone(&state);

@@ -11,6 +11,7 @@ path = "src/main.rs"
 shared = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
+aws-sdk-apigatewaymanagement = { workspace = true }
 lambda_http = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
