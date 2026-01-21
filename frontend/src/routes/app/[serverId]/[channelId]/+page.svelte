@@ -96,8 +96,13 @@
 			// Restore input on error
 			messageInput = content;
 			error = result.error;
+		} else if (result.data) {
+			// Add message immediately (deduplication will handle if WS also delivers it)
+			if (!messages.find((m) => m.id === result.data!.id)) {
+				messages = [...messages, result.data];
+				scrollToBottom();
+			}
 		}
-		// Note: Message will arrive via WebSocket broadcast
 
 		sending = false;
 	}
