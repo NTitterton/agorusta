@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/auth.svelte';
+	import { websocket } from '$lib/websocket.svelte';
 	import { getServers, createServer, type Server } from '$lib/api';
 
 	let { children } = $props();
@@ -19,6 +20,14 @@
 			return;
 		}
 		await loadServers();
+
+		// Connect WebSocket for real-time updates
+		websocket.connect();
+
+		return () => {
+			// Disconnect WebSocket when leaving app
+			websocket.disconnect();
+		};
 	});
 
 	async function loadServers() {

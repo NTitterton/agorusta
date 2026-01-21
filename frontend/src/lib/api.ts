@@ -40,6 +40,21 @@ export interface Member {
 	joined_at: number;
 }
 
+export interface Message {
+	id: string;
+	channel_id: string;
+	author_id: string;
+	author_username: string;
+	content: string;
+	created_at: number;
+}
+
+export interface MessagesResponse {
+	messages: Message[];
+	has_more: boolean;
+	next_cursor: number | null;
+}
+
 export interface ServerWithChannels extends Server {
 	channels: Channel[];
 	member_count: number;
@@ -169,4 +184,29 @@ export async function createChannel(
 
 export async function getMembers(serverId: string): Promise<{ data?: Member[]; error?: string }> {
 	return api<Member[]>(`/servers/${serverId}/members`);
+}
+
+// ============ Messages ============
+
+export async function getMessages(
+	serverId: string,
+	channelId: string,
+	options?: { limit?: number; before?: number }
+): Promise<{ data?: MessagesResponse; error?: string }> {
+	const params = new URLSearchParams();
+	if (options?.limit) params.set('limit', options.limit.toString());
+	if (options?.before) params.set('before', options.before.toString());
+	const query = params.toString() ? `?${params}` : '';
+	return api<MessagesResponse>(`/servers/${serverId}/channels/${channelId}/messages${query}`);
+}
+
+export async function sendMessage(
+	serverId: string,
+	channelId: string,
+	content: string
+): Promise<{ data?: Message; error?: string }> {
+	return api<Message>(`/servers/${serverId}/channels/${channelId}/messages`, {
+		method: 'POST',
+		body: JSON.stringify({ content })
+	});
 }
