@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "lambdas/api",
+    "lambdas/websocket",
+    "shared",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Nick Titterton"]
+
+[workspace.dependencies]
+# AWS SDK
+aws-config = "1"
+aws-sdk-dynamodb = "1"
+aws-sdk-apigatewaymanagement = "1"
+
+# Lambda runtime
+lambda_http = "0.13"
+lambda_runtime = "0.13"
+
+# Async
+tokio = { version = "1", features = ["macros"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auth
+jsonwebtoken = "9"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Shared crate
+shared = { path = "shared" }
+
+# Optimize release builds for size (Lambda has 250MB limit)
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true
+panic = "abort"

@@ -1,0 +1,40 @@
+# Dotfiles (except .gitignore)
+.*
+.*/
+!.gitignore
+
+# Rust build artifacts
+backend/target/
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node.js
+node_modules/
+dist/
+build/
+.svelte-kit/
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+
+# Project specific
+for_claude/
