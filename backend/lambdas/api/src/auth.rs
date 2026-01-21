@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub struct Claims {
     pub sub: String,  // user id
     pub email: String,
+    pub username: String,
     pub exp: usize,   // expiration timestamp
 }
 
@@ -65,7 +66,7 @@ fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-fn create_token(user_id: &str, email: &str) -> Result<String, String> {
+fn create_token(user_id: &str, email: &str, username: &str) -> Result<String, String> {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(7))
         .expect("valid timestamp")
@@ -74,6 +75,7 @@ fn create_token(user_id: &str, email: &str) -> Result<String, String> {
     let claims = Claims {
         sub: user_id.to_string(),
         email: email.to_string(),
+        username: username.to_string(),
         exp: expiration,
     };
 
@@ -145,7 +147,7 @@ pub async fn register(
         .await
         .map_err(|e| (500, format!("Failed to create user: {}", e)))?;
 
-    let token = create_token(&user_id, &req.email)
+    let token = create_token(&user_id, &req.email, &req.username)
         .map_err(|e| (500, e))?;
 
     Ok(AuthResponse {
@@ -201,7 +203,7 @@ pub async fn login(
         return Err((401, "Invalid email or password".to_string()));
     }
 
-    let token = create_token(user_id, &req.email)
+    let token = create_token(user_id, &req.email, username)
         .map_err(|e| (500, e))?;
 
     Ok(AuthResponse {

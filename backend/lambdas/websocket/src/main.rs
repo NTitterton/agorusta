@@ -42,6 +42,7 @@ struct WebSocketResponse {
 struct Claims {
     sub: String,  // user id
     email: String,
+    username: String,
     exp: usize,
 }
 

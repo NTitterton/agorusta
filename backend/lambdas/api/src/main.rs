@@ -126,10 +126,7 @@ async fn handler(event: Request, state: Arc<AppState>) -> Result<Response<Body>,
         ("POST", ["servers"]) => {
             match require_auth(&event) {
                 Ok(claims) => {
-                    // We need username for member record - fetch from users table or include in token
-                    // For now, use email prefix as username fallback
-                    let username = claims.email.split('@').next().unwrap_or("user");
-                    match servers::create_server(&state.db, &claims.sub, username, &body).await {
+                    match servers::create_server(&state.db, &claims.sub, &claims.username, &body).await {
                         Ok(server) => json_response(201, &server),
                         Err((status, message)) => error_response(status, &message),
                     }
@@ -221,13 +218,12 @@ async fn handler(event: Request, state: Arc<AppState>) -> Result<Response<Body>,
         ("POST", ["servers", server_id, "channels", channel_id, "messages"]) => {
             match require_auth(&event) {
                 Ok(claims) => {
-                    let username = claims.email.split('@').next().unwrap_or("user");
                     match messages::create_message(
                         &state.db,
                         server_id,
                         channel_id,
                         &claims.sub,
-                        username,
+                        &claims.username,
                         &body,
                     )
                     .await
