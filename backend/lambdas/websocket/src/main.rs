@@ -4,6 +4,7 @@ use jsonwebtoken::{decode, DecodingKey, Validation};
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Deserialize)]
@@ -348,11 +349,11 @@ async fn main() -> Result<(), Error> {
     // Initialize AWS SDK
     let config = aws_config::load_from_env().await;
     let db = DynamoClient::new(&config);
-    let state = AppState { db };
+    let state = Arc::new(AppState { db });
 
     run(service_fn(move |event| {
-        let state_ref = &state;
-        async move { handler(event, state_ref).await }
+        let state = Arc::clone(&state);
+        async move { handler(event, &state).await }
     }))
     .await
 }

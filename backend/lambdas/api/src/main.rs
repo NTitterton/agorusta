@@ -1,6 +1,6 @@
 use aws_sdk_apigatewaymanagement::Client as ApiGwClient;
 use aws_sdk_dynamodb::Client as DynamoClient;
-use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use lambda_http::{run, service_fn, Body, Error, Request, RequestExt, Response};
 use std::env;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -195,11 +195,11 @@ async fn handler(event: Request, state: Arc<AppState>) -> Result<Response<Body>,
                     let query_params = event.query_string_parameters();
                     let limit: usize = query_params
                         .first("limit")
-                        .and_then(|v| v.parse().ok())
+                        .and_then(|v: &str| v.parse().ok())
                         .unwrap_or(50);
                     let before: Option<i64> = query_params
                         .first("before")
-                        .and_then(|v| v.parse().ok());
+                        .and_then(|v: &str| v.parse().ok());
 
                     match messages::list_messages(
                         &state.db,

@@ -256,8 +256,10 @@ pub async fn broadcast_message(
         }
     };
 
+    let num_recipients = connections.len();
+
     // Send to each connection
-    for conn in connections {
+    for conn in &connections {
         let connection_id = match conn.get("connection_id").and_then(|v| v.as_s().ok()) {
             Some(id) => id.clone(),
             None => continue,
@@ -295,7 +297,7 @@ pub async fn broadcast_message(
 
     tracing::info!(
         channel_id = %message.channel_id,
-        recipients = connections.len(),
+        recipients = num_recipients,
         "Broadcast complete"
     );
 }
