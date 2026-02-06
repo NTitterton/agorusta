@@ -3,6 +3,7 @@ import { WS_URL, type Message, type DirectMessage } from './api';
 type MessageHandler = (message: Message) => void;
 type DmHandler = (message: DirectMessage) => void;
 type TypingHandler = (typingUsers: Map<string, string>) => void; // user_id -> username
+type PresenceHandler = (userId: string, username: string, isOnline: boolean) => void;
 
 interface TypingUser {
 	username: string;
@@ -17,6 +18,7 @@ class WebSocketService {
 	private messageHandlers: Map<string, Set<MessageHandler>> = new Map();
 	private dmHandlers: Map<string, Set<DmHandler>> = new Map();
 	private typingHandlers: Map<string, Set<TypingHandler>> = new Map();
+	private presenceHandlers: Set<PresenceHandler> = new Set();
 	private typingUsers: Map<string, Map<string, TypingUser>> = new Map(); // channel_id -> (user_id -> TypingUser)
 	private subscribedChannels: Set<string> = new Set();
 
@@ -84,6 +86,10 @@ class WebSocketService {
 						this.handleTypingEvent(data.channel_id, data.user_id, data.username, true);
 					} else if (data.type === 'user_stop_typing') {
 						this.handleTypingEvent(data.channel_id, data.user_id, data.username, false);
+					} else if (data.type === 'presence_change') {
+						this.presenceHandlers.forEach((handler) =>
+							handler(data.user_id, data.username, data.is_online)
+						);
 					}
 				} catch (e) {
 					console.error('Failed to parse WebSocket message:', e);
@@ -150,6 +156,7 @@ class WebSocketService {
 		this.messageHandlers.clear();
 		this.dmHandlers.clear();
 		this.typingHandlers.clear();
+		this.presenceHandlers.clear();
 		// Clear all typing timeouts
 		this.typingUsers.forEach((channelTyping) => {
 			channelTyping.forEach((user) => clearTimeout(user.timeout));
@@ -264,6 +271,15 @@ class WebSocketService {
 				})
 			);
 		}
+	}
+
+	subscribeToPresence(handler: PresenceHandler): () => void {
+		this.presenceHandlers.add(handler);
+
+		// Return unsubscribe function
+		return () => {
+			this.presenceHandlers.delete(handler);
+		};
 	}
 }
 

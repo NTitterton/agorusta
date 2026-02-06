@@ -1,0 +1,22 @@
+{
+  "name": "e2e-tests",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:auth": "playwright test auth.spec.ts",
+    "test:presence": "playwright test presence.spec.ts",
+    "test:messaging": "playwright test messaging.spec.ts",
+    "report": "playwright show-report"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "End-to-end tests for Agorusta",
+  "devDependencies": {
+    "@playwright/test": "^1.58.1"
+  }
+}

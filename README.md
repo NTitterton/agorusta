@@ -4,20 +4,25 @@ A Discord-like chat application built with Rust serverless backend and SvelteKit
 
 ## Features
 
-- User authentication (JWT)
+- User authentication (JWT with Argon2 hashing)
 - Create and join servers (invite codes or name+password)
 - Text channels with real-time messaging
 - Direct messages between users
+- User presence (online/offline indicators)
+- Members sidebar with role grouping (Owner, Admin, Member)
 - WebSocket-powered live updates
+- File uploads (images, documents)
+- Typing indicators
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | SvelteKit, TypeScript |
+| Frontend | SvelteKit 5, TypeScript |
 | Backend | Rust, AWS Lambda |
 | Database | DynamoDB |
 | Real-time | API Gateway WebSockets |
+| Storage | S3 |
 | IaC | AWS SAM |
 
 ## Quick Start
@@ -44,6 +49,18 @@ cd frontend && npm install && npm run dev
 
 ```bash
 sam build && sam deploy
+```
+
+### Testing
+
+```bash
+# Backend unit tests
+cd backend && cargo test
+
+# E2E tests (requires frontend running)
+cd e2e-tests && npm install
+npx playwright install chromium
+npm test
 ```
 
 ## Documentation

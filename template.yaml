@@ -140,6 +140,8 @@ Resources:
             TableName: !Ref ConnectionsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref MessagesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MembersTable
         - Statement:
             - Effect: Allow
               Action:
@@ -147,6 +149,7 @@ Resources:
               Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
       Environment:
         Variables:
+          MEMBERS_TABLE: !Ref MembersTable
           WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
 
   # WebSocket Routes
@@ -336,9 +339,18 @@ Resources:
       AttributeDefinitions:
         - AttributeName: connection_id
           AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
       KeySchema:
         - AttributeName: connection_id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: user-connections-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true

@@ -6,6 +6,7 @@ use aws_sdk_dynamodb::Client as DynamoClient;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -141,6 +142,165 @@ async fn broadcast_to_channel(
     Ok(())
 }
 
+/// Get all server IDs that a user is a member of
+async fn get_user_servers(db: &DynamoClient, user_id: &str) -> Vec<String> {
+    let result = db
+        .query()
+        .table_name(get_table("MEMBERS_TABLE"))
+        .index_name("user-servers-index")
+        .key_condition_expression("user_id = :uid")
+        .expression_attribute_values(":uid", AttributeValue::S(user_id.to_string()))
+        .send()
+        .await;
+
+    match result {
+        Ok(output) => output
+            .items()
+            .iter()
+            .filter_map(|item| item.get("server_id")?.as_s().ok().cloned())
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to get user servers");
+            vec![]
+        }
+    }
+}
+
+/// Get all members of a server (for broadcasting presence)
+async fn get_server_member_ids(db: &DynamoClient, server_id: &str) -> Vec<String> {
+    let result = db
+        .query()
+        .table_name(get_table("MEMBERS_TABLE"))
+        .key_condition_expression("server_id = :sid")
+        .expression_attribute_values(":sid", AttributeValue::S(server_id.to_string()))
+        .send()
+        .await;
+
+    match result {
+        Ok(output) => output
+            .items()
+            .iter()
+            .filter_map(|item| item.get("user_id")?.as_s().ok().cloned())
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to get server members");
+            vec![]
+        }
+    }
+}
+
+/// Check if user has any other active connections
+async fn user_has_other_connections(db: &DynamoClient, user_id: &str, exclude_connection_id: &str) -> bool {
+    let result = db
+        .query()
+        .table_name(get_table("CONNECTIONS_TABLE"))
+        .index_name("user-connections-index")
+        .key_condition_expression("user_id = :uid")
+        .expression_attribute_values(":uid", AttributeValue::S(user_id.to_string()))
+        .send()
+        .await;
+
+    match result {
+        Ok(output) => {
+            // Check if there are any connections other than the one being excluded
+            output
+                .items()
+                .iter()
+                .any(|item| {
+                    item.get("connection_id")
+                        .and_then(|v| v.as_s().ok())
+                        .map(|id| id != exclude_connection_id)
+                        .unwrap_or(false)
+                })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to check user connections");
+            false
+        }
+    }
+}
+
+/// Broadcast presence change to all members of the user's servers
+async fn broadcast_presence_change(
+    state: &AppState,
+    user_id: &str,
+    username: &str,
+    is_online: bool,
+) {
+    let apigw = match &state.apigw {
+        Some(client) => client,
+        None => return,
+    };
+
+    // Get all servers the user is a member of
+    let server_ids = get_user_servers(&state.db, user_id).await;
+
+    // Collect all unique user IDs across all servers (to avoid duplicate broadcasts)
+    let mut target_user_ids: HashSet<String> = HashSet::new();
+    for server_id in &server_ids {
+        let member_ids = get_server_member_ids(&state.db, server_id).await;
+        target_user_ids.extend(member_ids);
+    }
+
+    // Remove the user themselves from the target list
+    target_user_ids.remove(user_id);
+
+    if target_user_ids.is_empty() {
+        return;
+    }
+
+    // Build presence change payload
+    let payload = serde_json::json!({
+        "type": "presence_change",
+        "user_id": user_id,
+        "username": username,
+        "is_online": is_online
+    });
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+
+    // Find all connections for target users and send the presence update
+    for target_user_id in target_user_ids {
+        // Query connections for this user
+        let conn_result = state
+            .db
+            .query()
+            .table_name(get_table("CONNECTIONS_TABLE"))
+            .index_name("user-connections-index")
+            .key_condition_expression("user_id = :uid")
+            .expression_attribute_values(":uid", AttributeValue::S(target_user_id.clone()))
+            .send()
+            .await;
+
+        if let Ok(output) = conn_result {
+            for item in output.items() {
+                if let Some(conn_id) = item.get("connection_id").and_then(|v| v.as_s().ok()) {
+                    let send_result = apigw
+                        .post_to_connection()
+                        .connection_id(conn_id)
+                        .data(Blob::new(payload_bytes.clone()))
+                        .send()
+                        .await;
+
+                    if let Err(e) = send_result {
+                        tracing::warn!(
+                            connection_id = %conn_id,
+                            error = %e,
+                            "Failed to send presence update"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        user_id = %user_id,
+        is_online = %is_online,
+        server_count = %server_ids.len(),
+        "Broadcast presence change"
+    );
+}
+
 async fn handle_connect(
     state: &AppState,
     connection_id: &str,
@@ -193,6 +353,15 @@ async fn handle_connect(
                 user_id = %claims.sub,
                 "Client connected"
             );
+
+            // Check if this is the user's first connection (they were previously offline)
+            // We just added a connection, so if there's only one, they just came online
+            let was_offline = !user_has_other_connections(&state.db, &claims.sub, connection_id).await;
+            if was_offline {
+                // Broadcast that user is now online
+                broadcast_presence_change(state, &claims.sub, &claims.username, true).await;
+            }
+
             WebSocketResponse {
                 status_code: 200,
                 body: None,
@@ -209,6 +378,32 @@ async fn handle_connect(
 }
 
 async fn handle_disconnect(state: &AppState, connection_id: &str) -> WebSocketResponse {
+    // First, get the user info before deleting the connection
+    let conn_result = state
+        .db
+        .get_item()
+        .table_name(get_table("CONNECTIONS_TABLE"))
+        .key("connection_id", AttributeValue::S(connection_id.to_string()))
+        .send()
+        .await;
+
+    let user_info = conn_result.ok().and_then(|output| {
+        output.item.map(|item| {
+            let user_id = item
+                .get("user_id")
+                .and_then(|v| v.as_s().ok())
+                .cloned()
+                .unwrap_or_default();
+            let username = item
+                .get("username")
+                .and_then(|v| v.as_s().ok())
+                .cloned()
+                .unwrap_or_default();
+            (user_id, username)
+        })
+    });
+
+    // Delete the connection
     let result = state
         .db
         .delete_item()
@@ -220,6 +415,18 @@ async fn handle_disconnect(state: &AppState, connection_id: &str) -> WebSocketRe
     match result {
         Ok(_) => {
             tracing::info!(connection_id = %connection_id, "Client disconnected");
+
+            // Check if user has any other connections
+            if let Some((user_id, username)) = user_info {
+                if !user_id.is_empty() {
+                    // Check if this was their last connection
+                    let has_other = user_has_other_connections(&state.db, &user_id, connection_id).await;
+                    if !has_other {
+                        // Broadcast that user is now offline
+                        broadcast_presence_change(state, &user_id, &username, false).await;
+                    }
+                }
+            }
         }
         Err(e) => {
             tracing::error!(connection_id = %connection_id, error = %e, "Failed to remove connection");

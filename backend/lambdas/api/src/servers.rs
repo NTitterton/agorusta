@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use uuid::Uuid;
 
+use crate::presence;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Server {
     pub id: String,
@@ -29,6 +31,16 @@ pub struct Member {
     pub username: String,
     pub role: String, // "owner", "admin", "member"
     pub joined_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemberWithPresence {
+    pub server_id: String,
+    pub user_id: String,
+    pub username: String,
+    pub role: String, // "owner", "admin", "member"
+    pub joined_at: i64,
+    pub is_online: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,7 +334,7 @@ pub async fn list_members(
     db: &DynamoClient,
     server_id: &str,
     user_id: &str,
-) -> Result<Vec<Member>, (u16, String)> {
+) -> Result<Vec<MemberWithPresence>, (u16, String)> {
     // Check membership
     check_membership(db, server_id, user_id).await?;
 
@@ -341,7 +353,90 @@ pub async fn list_members(
         .filter_map(parse_member)
         .collect();
 
-    Ok(members)
+    // Get current usernames from Users table
+    let member_user_ids: Vec<String> = members.iter().map(|m| m.user_id.clone()).collect();
+    let current_usernames = get_current_usernames(db, &member_user_ids).await;
+
+    // Get online status for all members
+    let online_users = presence::get_online_users(db, &member_user_ids).await;
+
+    // Convert to MemberWithPresence with current usernames
+    // Note: Current user is always marked online (they're viewing this page)
+    let members_with_presence: Vec<MemberWithPresence> = members
+        .into_iter()
+        .map(|m| {
+            // Current user is always online (they're making this request)
+            let is_online = m.user_id == user_id || online_users.contains(&m.user_id);
+            let username = current_usernames
+                .get(&m.user_id)
+                .cloned()
+                .unwrap_or(m.username);
+            MemberWithPresence {
+                server_id: m.server_id,
+                user_id: m.user_id.clone(),
+                username,
+                role: m.role,
+                joined_at: m.joined_at,
+                is_online,
+            }
+        })
+        .collect();
+
+    Ok(members_with_presence)
+}
+
+/// Fetch current usernames from Users table for a list of user IDs
+async fn get_current_usernames(
+    db: &DynamoClient,
+    user_ids: &[String],
+) -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+
+    let mut usernames: HashMap<String, String> = HashMap::new();
+
+    if user_ids.is_empty() {
+        return usernames;
+    }
+
+    // Build keys for BatchGetItem
+    let keys: Vec<HashMap<String, AttributeValue>> = user_ids
+        .iter()
+        .map(|id| {
+            let mut key = HashMap::new();
+            key.insert("id".to_string(), AttributeValue::S(id.clone()));
+            key
+        })
+        .collect();
+
+    // BatchGetItem has a limit of 100 items, but for most servers this is fine
+    let keys_and_attrs = aws_sdk_dynamodb::types::KeysAndAttributes::builder()
+        .set_keys(Some(keys))
+        .projection_expression("id, username")
+        .build()
+        .unwrap();
+
+    let result = db
+        .batch_get_item()
+        .request_items(get_table("USERS_TABLE"), keys_and_attrs)
+        .send()
+        .await;
+
+    if let Ok(output) = result {
+        if let Some(responses) = output.responses {
+            if let Some(users) = responses.get(&get_table("USERS_TABLE")) {
+                for user in users {
+                    if let (Some(id), Some(username)) = (
+                        user.get("id").and_then(|v| v.as_s().ok()),
+                        user.get("username").and_then(|v| v.as_s().ok()),
+                    ) {
+                        usernames.insert(id.clone(), username.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    usernames
 }
 
 // ============ Helpers ============

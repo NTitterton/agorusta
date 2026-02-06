@@ -36,8 +36,9 @@ export interface Member {
 	server_id: string;
 	user_id: string;
 	username: string;
-	role: string;
+	role: 'owner' | 'admin' | 'member';
 	joined_at: number;
+	is_online: boolean;
 }
 
 export interface Message {

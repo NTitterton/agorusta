@@ -15,6 +15,8 @@ The core features are implemented and deployed:
 - Text channels with real-time messaging
 - Direct messages between users
 - WebSocket-powered live updates
+- User presence tracking (online/offline status)
+- Members sidebar with role grouping
 
 ## Architecture
 
@@ -46,6 +48,18 @@ cd frontend && npm run dev
 
 # Check backend compilation
 cd backend && cargo check
+
+# Run backend unit tests
+cd backend && cargo test
+
+# Run E2E tests (requires frontend running)
+cd e2e-tests && npm test
+
+# Run E2E tests with browser visible
+cd e2e-tests && npm run test:headed
+
+# Run specific E2E test suite
+cd e2e-tests && npm run test:presence
 ```
 
 ## Development Notes
@@ -57,9 +71,9 @@ cd backend && cargo check
 
 ## Potential Future Work
 
-- File uploads (S3)
 - Voice channels (WebRTC)
 - Server roles and permissions
 - Message editing/deletion
-- Typing indicators
 - Read receipts
+- User profile pages
+- Server icons/banners

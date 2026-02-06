@@ -10,6 +10,7 @@ mod auth;
 mod dms;
 mod invites;
 mod messages;
+mod presence;
 mod servers;
 mod uploads;
 

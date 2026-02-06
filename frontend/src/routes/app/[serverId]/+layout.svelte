@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { onMount, setContext } from 'svelte';
 	import { getServer, createChannel, type ServerWithChannels, type Channel } from '$lib/api';
+	import MembersSidebar from '$lib/components/MembersSidebar.svelte';
 
 	let { children } = $props();
 
@@ -126,6 +127,10 @@
 	<div class="server-content">
 		{@render children()}
 	</div>
+
+	{#if server}
+		<MembersSidebar serverId={server.id} />
+	{/if}
 </div>
 
 <style>
