@@ -382,3 +382,68 @@ export async function sendDmMessage(
 		body: JSON.stringify({ content })
 	});
 }
+
+// ============ File Uploads ============
+
+export interface UploadResponse {
+	upload_url: string;
+	file_id: string;
+	download_url: string;
+}
+
+export interface Attachment {
+	id: string;
+	filename: string;
+	content_type: string;
+	size: number;
+	url: string;
+}
+
+export async function requestUpload(
+	filename: string,
+	contentType: string,
+	size: number
+): Promise<{ data?: UploadResponse; error?: string }> {
+	return api<UploadResponse>('/uploads', {
+		method: 'POST',
+		body: JSON.stringify({ filename, content_type: contentType, size })
+	});
+}
+
+export async function uploadFile(file: File): Promise<{ data?: Attachment; error?: string }> {
+	// Step 1: Get presigned upload URL
+	const uploadResult = await requestUpload(file.name, file.type || 'application/octet-stream', file.size);
+	if (uploadResult.error || !uploadResult.data) {
+		return { error: uploadResult.error || 'Failed to get upload URL' };
+	}
+
+	const { upload_url, file_id, download_url } = uploadResult.data;
+
+	// Step 2: Upload file directly to S3
+	try {
+		const response = await fetch(upload_url, {
+			method: 'PUT',
+			body: file,
+			headers: {
+				'Content-Type': file.type || 'application/octet-stream'
+			}
+		});
+
+		if (!response.ok) {
+			return { error: `Upload failed: ${response.statusText}` };
+		}
+
+		// Return attachment info
+		return {
+			data: {
+				id: file_id,
+				filename: file.name,
+				content_type: file.type || 'application/octet-stream',
+				size: file.size,
+				url: download_url
+			}
+		};
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : 'Upload failed' };
+	}
+}

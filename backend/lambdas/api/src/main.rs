@@ -1,5 +1,6 @@
 use aws_sdk_apigatewaymanagement::Client as ApiGwClient;
 use aws_sdk_dynamodb::Client as DynamoClient;
+use aws_sdk_s3::Client as S3Client;
 use lambda_http::{run, service_fn, Body, Error, Request, RequestExt, Response};
 use std::env;
 use std::sync::Arc;
@@ -10,10 +11,12 @@ mod dms;
 mod invites;
 mod messages;
 mod servers;
+mod uploads;
 
 struct AppState {
     db: DynamoClient,
     apigw: Option<ApiGwClient>,
+    s3: S3Client,
 }
 
 fn cors_response(status: u16, body: impl Into<Body>) -> Result<Response<Body>, Error> {
@@ -455,6 +458,24 @@ async fn handler(event: Request, state: Arc<AppState>) -> Result<Response<Body>,
             }
         }
 
+        // ============ Upload routes ============
+        ("POST", ["uploads"]) => {
+            match require_auth(&event) {
+                Ok(claims) => {
+                    match serde_json::from_str::<uploads::UploadRequest>(&body) {
+                        Ok(request) => {
+                            match uploads::create_upload(&state.s3, &claims.sub, request).await {
+                                Ok(response) => json_response(200, &response),
+                                Err((status, message)) => error_response(status, &message),
+                            }
+                        }
+                        Err(_) => error_response(400, "Invalid request body"),
+                    }
+                }
+                Err(resp) => Ok(resp),
+            }
+        }
+
         // 404 for everything else
         _ => {
             error_response(404, "not found")
@@ -472,22 +493,32 @@ async fn main() -> Result<(), Error> {
     // Initialize AWS SDK
     let config = aws_config::load_from_env().await;
     let db = DynamoClient::new(&config);
+    let s3 = S3Client::new(&config);
 
     // Initialize API Gateway Management client for WebSocket broadcasts
     let apigw = if let Ok(endpoint) = env::var("WEBSOCKET_ENDPOINT") {
-        let apigw_config = aws_sdk_apigatewaymanagement::Config::builder()
-            .endpoint_url(endpoint)
-            .region(config.region().cloned())
-            .credentials_provider(config.credentials_provider().unwrap().clone())
-            .behavior_version(aws_sdk_apigatewaymanagement::config::BehaviorVersion::latest())
-            .build();
-        Some(ApiGwClient::from_conf(apigw_config))
+        tracing::info!(endpoint = %endpoint, "Initializing API Gateway Management client");
+        match config.credentials_provider() {
+            Some(creds) => {
+                let apigw_config = aws_sdk_apigatewaymanagement::Config::builder()
+                    .endpoint_url(endpoint)
+                    .region(config.region().cloned())
+                    .credentials_provider(creds.clone())
+                    .behavior_version(aws_sdk_apigatewaymanagement::config::BehaviorVersion::latest())
+                    .build();
+                Some(ApiGwClient::from_conf(apigw_config))
+            }
+            None => {
+                tracing::error!("No credentials provider available for API Gateway client");
+                None
+            }
+        }
     } else {
         tracing::warn!("WEBSOCKET_ENDPOINT not set, broadcast disabled");
         None
     };
 
-    let state = Arc::new(AppState { db, apigw });
+    let state = Arc::new(AppState { db, apigw, s3 });
 
     run(service_fn(move |event| {
         let state = Arc::clone(&state);

@@ -2,6 +2,12 @@ import { WS_URL, type Message, type DirectMessage } from './api';
 
 type MessageHandler = (message: Message) => void;
 type DmHandler = (message: DirectMessage) => void;
+type TypingHandler = (typingUsers: Map<string, string>) => void; // user_id -> username
+
+interface TypingUser {
+	username: string;
+	timeout: ReturnType<typeof setTimeout>;
+}
 
 class WebSocketService {
 	private ws: WebSocket | null = null;
@@ -10,6 +16,8 @@ class WebSocketService {
 	private reconnectDelay = 1000;
 	private messageHandlers: Map<string, Set<MessageHandler>> = new Map();
 	private dmHandlers: Map<string, Set<DmHandler>> = new Map();
+	private typingHandlers: Map<string, Set<TypingHandler>> = new Map();
+	private typingUsers: Map<string, Map<string, TypingUser>> = new Map(); // channel_id -> (user_id -> TypingUser)
 	private subscribedChannels: Set<string> = new Set();
 
 	connected = $state(false);
@@ -72,6 +80,10 @@ class WebSocketService {
 						const message = data.message as DirectMessage;
 						const handlers = this.dmHandlers.get(message.conversation_id);
 						handlers?.forEach((handler) => handler(message));
+					} else if (data.type === 'user_typing') {
+						this.handleTypingEvent(data.channel_id, data.user_id, data.username, true);
+					} else if (data.type === 'user_stop_typing') {
+						this.handleTypingEvent(data.channel_id, data.user_id, data.username, false);
 					}
 				} catch (e) {
 					console.error('Failed to parse WebSocket message:', e);
@@ -83,6 +95,51 @@ class WebSocketService {
 		}
 	}
 
+	private handleTypingEvent(channelId: string, userId: string, username: string, isTyping: boolean) {
+		if (!this.typingUsers.has(channelId)) {
+			this.typingUsers.set(channelId, new Map());
+		}
+		const channelTyping = this.typingUsers.get(channelId)!;
+
+		if (isTyping) {
+			// Clear existing timeout if any
+			const existing = channelTyping.get(userId);
+			if (existing) {
+				clearTimeout(existing.timeout);
+			}
+
+			// Set new timeout to auto-remove after 5 seconds
+			const timeout = setTimeout(() => {
+				channelTyping.delete(userId);
+				this.notifyTypingHandlers(channelId);
+			}, 5000);
+
+			channelTyping.set(userId, { username, timeout });
+		} else {
+			// Remove user from typing list
+			const existing = channelTyping.get(userId);
+			if (existing) {
+				clearTimeout(existing.timeout);
+				channelTyping.delete(userId);
+			}
+		}
+
+		this.notifyTypingHandlers(channelId);
+	}
+
+	private notifyTypingHandlers(channelId: string) {
+		const handlers = this.typingHandlers.get(channelId);
+		if (!handlers) return;
+
+		const channelTyping = this.typingUsers.get(channelId);
+		const typingMap = new Map<string, string>();
+		if (channelTyping) {
+			channelTyping.forEach((user, id) => typingMap.set(id, user.username));
+		}
+
+		handlers.forEach((handler) => handler(typingMap));
+	}
+
 	disconnect() {
 		if (this.ws) {
 			this.ws.close(1000, 'User disconnected');
@@ -92,6 +149,12 @@ class WebSocketService {
 		this.subscribedChannels.clear();
 		this.messageHandlers.clear();
 		this.dmHandlers.clear();
+		this.typingHandlers.clear();
+		// Clear all typing timeouts
+		this.typingUsers.forEach((channelTyping) => {
+			channelTyping.forEach((user) => clearTimeout(user.timeout));
+		});
+		this.typingUsers.clear();
 	}
 
 	subscribeToChannel(channelId: string, handler: MessageHandler): () => void {
@@ -164,6 +227,43 @@ class WebSocketService {
 				this.sendUnsubscribe(conversationId);
 			}
 		};
+	}
+
+	subscribeToTyping(channelId: string, handler: TypingHandler): () => void {
+		if (!this.typingHandlers.has(channelId)) {
+			this.typingHandlers.set(channelId, new Set());
+		}
+		this.typingHandlers.get(channelId)!.add(handler);
+
+		// Return unsubscribe function
+		return () => {
+			this.typingHandlers.get(channelId)?.delete(handler);
+			if (this.typingHandlers.get(channelId)?.size === 0) {
+				this.typingHandlers.delete(channelId);
+			}
+		};
+	}
+
+	sendTyping(channelId: string) {
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			this.ws.send(
+				JSON.stringify({
+					action: 'typing',
+					channel_id: channelId
+				})
+			);
+		}
+	}
+
+	sendStopTyping(channelId: string) {
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			this.ws.send(
+				JSON.stringify({
+					action: 'stop_typing',
+					channel_id: channelId
+				})
+			);
+		}
 	}
 }
 

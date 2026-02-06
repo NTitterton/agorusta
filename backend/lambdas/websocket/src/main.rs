@@ -1,3 +1,6 @@
+use aws_sdk_apigatewaymanagement::{
+    config::BehaviorVersion, primitives::Blob, Client as ApiGwClient,
+};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client as DynamoClient;
 use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -55,6 +58,7 @@ struct WebSocketMessage {
 
 struct AppState {
     db: DynamoClient,
+    apigw: Option<ApiGwClient>,
 }
 
 fn get_jwt_secret() -> String {
@@ -78,6 +82,63 @@ fn validate_token(token: &str) -> Result<Claims, String> {
     )
     .map(|data| data.claims)
     .map_err(|e| format!("Invalid token: {}", e))
+}
+
+async fn broadcast_to_channel(
+    state: &AppState,
+    channel_id: &str,
+    payload: &[u8],
+    exclude_connection: Option<&str>,
+) -> Result<(), String> {
+    let apigw = match &state.apigw {
+        Some(client) => client,
+        None => return Err("API Gateway client not initialized".to_string()),
+    };
+
+    // Scan connections table for subscribers of this channel
+    let scan_result = state
+        .db
+        .scan()
+        .table_name(get_table("CONNECTIONS_TABLE"))
+        .filter_expression("contains(channels, :channel)")
+        .expression_attribute_values(":channel", AttributeValue::S(channel_id.to_string()))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to scan connections: {}", e))?;
+
+    let items = scan_result.items();
+
+    for item in items {
+        let conn_id = match item.get("connection_id").and_then(|v| v.as_s().ok()) {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Skip the sender
+        if let Some(exclude) = exclude_connection {
+            if conn_id == exclude {
+                continue;
+            }
+        }
+
+        // Send to this connection
+        let send_result = apigw
+            .post_to_connection()
+            .connection_id(conn_id)
+            .data(Blob::new(payload.to_vec()))
+            .send()
+            .await;
+
+        if let Err(e) = send_result {
+            tracing::warn!(
+                connection_id = %conn_id,
+                error = %e,
+                "Failed to send to connection (may be stale)"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_connect(
@@ -111,6 +172,8 @@ async fn handle_connect(
     // Store connection in DynamoDB with TTL (24 hours)
     let ttl = chrono::Utc::now().timestamp() + 86400;
 
+    // Note: Don't set empty channels - DynamoDB doesn't allow empty String Sets
+    // channels will be added via UPDATE when user subscribes
     let result = state
         .db
         .put_item()
@@ -118,7 +181,7 @@ async fn handle_connect(
         .item("connection_id", AttributeValue::S(connection_id.to_string()))
         .item("user_id", AttributeValue::S(claims.sub.clone()))
         .item("email", AttributeValue::S(claims.email.clone()))
-        .item("channels", AttributeValue::Ss(vec![])) // Empty string set initially
+        .item("username", AttributeValue::S(claims.username.clone()))
         .item("ttl", AttributeValue::N(ttl.to_string()))
         .send()
         .await;
@@ -208,10 +271,11 @@ async fn handle_message(
             };
 
             // Add channel to connection's subscription list
+            let table_name = get_table("CONNECTIONS_TABLE");
             let result = state
                 .db
                 .update_item()
-                .table_name(get_table("CONNECTIONS_TABLE"))
+                .table_name(&table_name)
                 .key("connection_id", AttributeValue::S(connection_id.to_string()))
                 .update_expression("ADD channels :channel")
                 .expression_attribute_values(
@@ -226,6 +290,7 @@ async fn handle_message(
                     tracing::info!(
                         connection_id = %connection_id,
                         channel_id = %channel_id,
+                        table = %table_name,
                         "Subscribed to channel"
                     );
                     WebSocketResponse {
@@ -300,6 +365,83 @@ async fn handle_message(
                 }
             }
         }
+        "typing" | "stop_typing" => {
+            let channel_id = match msg.channel_id {
+                Some(c) => c,
+                None => {
+                    return WebSocketResponse {
+                        status_code: 400,
+                        body: Some(r#"{"error":"channel_id required"}"#.to_string()),
+                    };
+                }
+            };
+
+            // Get user info from connection
+            let conn_result = state
+                .db
+                .get_item()
+                .table_name(get_table("CONNECTIONS_TABLE"))
+                .key("connection_id", AttributeValue::S(connection_id.to_string()))
+                .send()
+                .await;
+
+            let (user_id, username) = match conn_result {
+                Ok(output) => {
+                    if let Some(item) = output.item {
+                        let user_id = item
+                            .get("user_id")
+                            .and_then(|v| v.as_s().ok())
+                            .cloned()
+                            .unwrap_or_default();
+                        let username = item
+                            .get("username")
+                            .and_then(|v| v.as_s().ok())
+                            .cloned()
+                            .unwrap_or_default();
+                        (user_id, username)
+                    } else {
+                        return WebSocketResponse {
+                            status_code: 404,
+                            body: Some(r#"{"error":"connection not found"}"#.to_string()),
+                        };
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to get connection");
+                    return WebSocketResponse {
+                        status_code: 500,
+                        body: Some(r#"{"error":"internal error"}"#.to_string()),
+                    };
+                }
+            };
+
+            // Build typing event payload
+            let is_typing = msg.action == "typing";
+            let payload = serde_json::json!({
+                "type": if is_typing { "user_typing" } else { "user_stop_typing" },
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "username": username
+            });
+            let payload_bytes = serde_json::to_vec(&payload).unwrap();
+
+            // Broadcast to all subscribers of this channel (except sender)
+            if let Err(e) = broadcast_to_channel(
+                state,
+                &channel_id,
+                &payload_bytes,
+                Some(connection_id),
+            )
+            .await
+            {
+                tracing::error!(error = %e, "Failed to broadcast typing");
+            }
+
+            WebSocketResponse {
+                status_code: 200,
+                body: None,
+            }
+        }
         _ => {
             tracing::warn!(action = %msg.action, "Unknown action");
             WebSocketResponse {
@@ -350,7 +492,22 @@ async fn main() -> Result<(), Error> {
     // Initialize AWS SDK
     let config = aws_config::load_from_env().await;
     let db = DynamoClient::new(&config);
-    let state = Arc::new(AppState { db });
+
+    // Initialize API Gateway Management client for broadcasting
+    let apigw = if let Ok(endpoint) = env::var("WEBSOCKET_ENDPOINT") {
+        let apigw_config = aws_sdk_apigatewaymanagement::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .credentials_provider(config.credentials_provider().unwrap().clone())
+            .region(config.region().cloned())
+            .endpoint_url(endpoint)
+            .build();
+        Some(ApiGwClient::from_conf(apigw_config))
+    } else {
+        tracing::warn!("WEBSOCKET_ENDPOINT not set, typing broadcasts disabled");
+        None
+    };
+
+    let state = Arc::new(AppState { db, apigw });
 
     run(service_fn(move |event| {
         let state = Arc::clone(&state);

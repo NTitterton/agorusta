@@ -22,6 +22,7 @@ Globals:
         SERVER_PASSWORDS_TABLE: !Ref ServerPasswordsTable
         DM_CONVERSATIONS_TABLE: !Ref DirectConversationsTable
         DM_MESSAGES_TABLE: !Ref DirectMessagesTable
+        UPLOADS_BUCKET: !Ref UploadsBucket
 
 Parameters:
   Stage:
@@ -92,6 +93,13 @@ Resources:
               Action:
                 - execute-api:ManageConnections
               Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub "${UploadsBucket.Arn}/*"
       Events:
         CatchAll:
           Type: HttpApi
@@ -433,6 +441,30 @@ Resources:
           KeyType: HASH
         - AttributeName: created_at
           KeyType: RANGE
+
+  # ===================
+  # S3 Bucket for Uploads
+  # ===================
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub agorusta-uploads-${Stage}-${AWS::AccountId}
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+            AllowedOrigins:
+              - "http://localhost:5173"
+              - "http://localhost:3000"
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldFiles
+            Status: Enabled
+            ExpirationInDays: 90
 
 Outputs:
   HttpApiUrl:

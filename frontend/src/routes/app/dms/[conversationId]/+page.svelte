@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { getContext, onMount } from 'svelte';
+	import { getContext, onMount, onDestroy } from 'svelte';
 	import {
 		getConversation,
 		getDmMessages,
@@ -24,6 +24,11 @@
 
 	let messagesContainer: HTMLElement;
 
+	// Typing indicator state
+	let typingUsers = $state<Map<string, string>>(new Map());
+	let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+	let isTyping = false;
+
 	// Load conversation and messages when ID changes
 	$effect(() => {
 		if (conversationId) {
@@ -46,6 +51,49 @@
 
 		return unsubscribe;
 	});
+
+	// Subscribe to typing indicators
+	$effect(() => {
+		if (!conversationId) return;
+
+		const unsubscribe = websocket.subscribeToTyping(conversationId, (users) => {
+			typingUsers = users;
+		});
+
+		return () => {
+			unsubscribe();
+			// Clear typing state when leaving conversation
+			if (isTyping) {
+				websocket.sendStopTyping(conversationId);
+				isTyping = false;
+			}
+			if (typingTimeout) {
+				clearTimeout(typingTimeout);
+				typingTimeout = null;
+			}
+		};
+	});
+
+	function handleTyping() {
+		if (!conversationId) return;
+
+		// Send typing indicator
+		if (!isTyping) {
+			websocket.sendTyping(conversationId);
+			isTyping = true;
+		}
+
+		// Reset the stop-typing timeout
+		if (typingTimeout) {
+			clearTimeout(typingTimeout);
+		}
+		typingTimeout = setTimeout(() => {
+			if (isTyping && conversationId) {
+				websocket.sendStopTyping(conversationId);
+				isTyping = false;
+			}
+		}, 3000);
+	}
 
 	async function loadConversation() {
 		const result = await getConversation(conversationId);
@@ -96,6 +144,16 @@
 	async function handleSend(e: Event) {
 		e.preventDefault();
 		if (!messageInput.trim() || sending) return;
+
+		// Clear typing state
+		if (isTyping && conversationId) {
+			websocket.sendStopTyping(conversationId);
+			isTyping = false;
+		}
+		if (typingTimeout) {
+			clearTimeout(typingTimeout);
+			typingTimeout = null;
+		}
 
 		sending = true;
 		const content = messageInput.trim();
@@ -165,6 +223,46 @@
 	}
 
 	let messageGroups = $derived(getMessageGroups(messages));
+
+	// Parse message content for markdown links and images
+	function parseMessageContent(content: string): { type: 'text' | 'link' | 'image'; text: string; url?: string }[] {
+		const parts: { type: 'text' | 'link' | 'image'; text: string; url?: string }[] = [];
+		const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+		let lastIndex = 0;
+		let match;
+
+		while ((match = linkRegex.exec(content)) !== null) {
+			// Add text before the link
+			if (match.index > lastIndex) {
+				parts.push({ type: 'text', text: content.slice(lastIndex, match.index) });
+			}
+
+			const [, linkText, url] = match;
+			const isImage = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
+
+			parts.push({
+				type: isImage ? 'image' : 'link',
+				text: linkText,
+				url
+			});
+
+			lastIndex = match.index + match[0].length;
+		}
+
+		// Add remaining text
+		if (lastIndex < content.length) {
+			parts.push({ type: 'text', text: content.slice(lastIndex) });
+		}
+
+		return parts.length > 0 ? parts : [{ type: 'text', text: content }];
+	}
+
+	// Typing indicator text - for DMs it's simpler since there's only one other person
+	let typingText = $derived.by(() => {
+		const users = Array.from(typingUsers.values());
+		if (users.length === 0) return '';
+		return `${conversation?.other_username ?? 'User'} is typing...`;
+	});
 </script>
 
 <div class="dm-view">
@@ -215,7 +313,19 @@
 								<span class="message-author">{message.author_username}</span>
 								<span class="message-time">{formatTime(message.created_at)}</span>
 							</div>
-							<div class="message-content">{message.content}</div>
+							<div class="message-content">
+								{#each parseMessageContent(message.content) as part}
+									{#if part.type === 'text'}
+										{part.text}
+									{:else if part.type === 'image'}
+										<a href={part.url} target="_blank" rel="noopener noreferrer" class="message-image-link">
+											<img src={part.url} alt={part.text} class="message-image" />
+										</a>
+									{:else}
+										<a href={part.url} target="_blank" rel="noopener noreferrer" class="message-link">{part.text}</a>
+									{/if}
+								{/each}
+							</div>
 						</div>
 					</div>
 				{/each}
@@ -223,15 +333,24 @@
 		{/if}
 	</div>
 
-	<form class="message-input-container" onsubmit={handleSend}>
-		<input
-			type="text"
-			class="message-input"
-			placeholder="Message @{conversation?.other_username ?? 'user'}"
-			bind:value={messageInput}
-			disabled={sending}
-		/>
-	</form>
+	<div class="message-input-container">
+		{#if typingText}
+			<div class="typing-indicator">
+				<span class="typing-dots"></span>
+				{typingText}
+			</div>
+		{/if}
+		<form onsubmit={handleSend}>
+			<input
+				type="text"
+				class="message-input"
+				placeholder="Message @{conversation?.other_username ?? 'user'}"
+				bind:value={messageInput}
+				oninput={handleTyping}
+				disabled={sending}
+			/>
+		</form>
+	</div>
 </div>
 
 <style>
@@ -420,6 +539,32 @@
 		line-height: 1.4;
 		word-wrap: break-word;
 		margin-top: 4px;
+		white-space: pre-wrap;
+	}
+
+	.message-link {
+		color: var(--accent);
+		text-decoration: none;
+	}
+
+	.message-link:hover {
+		text-decoration: underline;
+	}
+
+	.message-image-link {
+		display: block;
+		margin-top: 8px;
+	}
+
+	.message-image {
+		max-width: 400px;
+		max-height: 300px;
+		border-radius: 8px;
+		cursor: pointer;
+	}
+
+	.message-image:hover {
+		opacity: 0.9;
 	}
 
 	.message-input-container {
@@ -435,5 +580,54 @@
 
 	.message-input:disabled {
 		opacity: 0.6;
+	}
+
+	.typing-indicator {
+		font-size: 12px;
+		color: var(--text-muted);
+		padding: 0 4px 6px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.typing-dots {
+		display: inline-flex;
+		gap: 2px;
+	}
+
+	.typing-dots::before,
+	.typing-dots::after {
+		content: '';
+		width: 4px;
+		height: 4px;
+		border-radius: 50%;
+		background: var(--text-muted);
+		animation: typing-bounce 1.4s infinite ease-in-out;
+	}
+
+	.typing-dots::before {
+		animation-delay: 0s;
+	}
+
+	.typing-dots::after {
+		animation-delay: 0.2s;
+	}
+
+	.typing-dots {
+		position: relative;
+	}
+
+	.typing-dots::before {
+		box-shadow: 6px 0 0 var(--text-muted);
+	}
+
+	@keyframes typing-bounce {
+		0%, 60%, 100% {
+			transform: translateY(0);
+		}
+		30% {
+			transform: translateY(-3px);
+		}
 	}
 </style>

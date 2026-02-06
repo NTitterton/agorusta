@@ -12,6 +12,7 @@ shared = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-apigatewaymanagement = { workspace = true }
+aws-sdk-s3 = { workspace = true }
 lambda_http = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -16,6 +16,7 @@ authors = ["Nick Titterton"]
 aws-config = "1"
 aws-sdk-dynamodb = "1"
 aws-sdk-apigatewaymanagement = "1"
+aws-sdk-s3 = "1"
 
 # Lambda runtime
 lambda_http = "0.13"

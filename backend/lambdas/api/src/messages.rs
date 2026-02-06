@@ -218,10 +218,17 @@ pub async fn broadcast_message(
     apigw: &ApiGwClient,
     message: &Message,
 ) {
+    let table_name = get_table("CONNECTIONS_TABLE");
+    tracing::info!(
+        channel_id = %message.channel_id,
+        table = %table_name,
+        "Starting broadcast"
+    );
+
     // Find all connections subscribed to this channel
     let scan_result = db
         .scan()
-        .table_name(get_table("CONNECTIONS_TABLE"))
+        .table_name(&table_name)
         .filter_expression("contains(channels, :channel_id)")
         .expression_attribute_values(
             ":channel_id",
@@ -233,13 +240,13 @@ pub async fn broadcast_message(
     let connections = match scan_result {
         Ok(result) => result.items().to_vec(),
         Err(e) => {
-            tracing::error!(error = %e, "Failed to scan connections");
+            tracing::error!(error = %e, table = %table_name, "Failed to scan connections");
             return;
         }
     };
 
     if connections.is_empty() {
-        tracing::debug!(channel_id = %message.channel_id, "No subscribers for channel");
+        tracing::info!(channel_id = %message.channel_id, table = %table_name, "No subscribers for channel");
         return;
     }
 
